@@ -1,0 +1,237 @@
+---
+title: "Untitled"
+author: "R Programming"
+date: "2024-10-15"
+output:
+  word_document: default
+  html_document: default
+---
+
+##1. Data Import and Cleaning:
+```{r}
+#Load the Library
+library(tidyverse)
+
+#L oad the dataset
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+download.file(url, destfile = "nyc_data.csv", method = "curl")
+
+# Now read the local file
+df <- read.csv("nyc_data.csv")
+head(df)
+
+# Removing irrelevant columns and changing types
+NYPD_data <- df %>%
+    select(-c("INCIDENT_KEY", "OCCUR_TIME", "JURISDICTION_CODE", "LOC_CLASSFCTN_DESC", "LOC_OF_OCCUR_DESC", 
+              "LOCATION_DESC", "X_COORD_CD", "Y_COORD_CD", "Latitude", "Lon_Lat", "Longitude", "PRECINCT")) %>%
+    mutate(OCCUR_DATE = mdy(OCCUR_DATE),
+           BORO = as.factor(BORO),
+           STATISTICAL_MURDER_FLAG = as.factor(STATISTICAL_MURDER_FLAG),
+           PERP_AGE_GROUP = as.factor(PERP_AGE_GROUP),
+           PERP_SEX = as.factor(PERP_SEX),
+           PERP_RACE = as.factor(PERP_RACE),
+           VIC_AGE_GROUP = as.factor(VIC_AGE_GROUP),
+           VIC_SEX = as.factor(VIC_SEX),
+           VIC_RACE = as.factor(VIC_RACE))
+
+```
+##2. Handling Missing Values:
+```{r}
+# Removing missing and invalid age groups
+NYPD_data <- NYPD_data[complete.cases(NYPD_data),] %>%
+    filter(VIC_AGE_GROUP != "1022") %>%
+    filter(PERP_AGE_GROUP != "1020", PERP_AGE_GROUP != "1028", PERP_AGE_GROUP != "224", PERP_AGE_GROUP != "940")
+
+```
+
+##3. Visualizing the Number of Shootings by Borough:
+```{r}
+# Grouping and counting shootings by borough
+Shootings_by_borough <- NYPD_data %>%
+    group_by(BORO) %>%
+    summarise(count = n())
+
+# Bar plot for shootings per borough
+ggplot(Shootings_by_borough, aes(x = BORO, y = count)) +
+    geom_bar(stat = "identity", fill = "limegreen") +
+    labs(title = "Number of Shootings by Borough (2006-2023)", x = "Borough", y = "Number of Shootings") +
+    theme_minimal()
+
+```
+
+
+##4. Normalizing Shootings by Borough Population:
+```{r}
+borough_population <- data.frame(BORO = c("BRONX", "BROOKLYN", "MANHATTAN", "QUEENS", "STATEN ISLAND"),
+                                 Population = c(mean(c(1332650, 1472653)), mean(c(2465326, 2736119)),
+                                                mean(c(1537195, 1694250)), mean(c(2229379, 2405425)),
+                                                mean(c(443728, 495752))))
+
+# Joining the population data and calculating shooting rates
+Shootings_by_borough <- left_join(Shootings_by_borough, borough_population, by = "BORO") %>%
+    mutate(Shooting_Rate = (count / Population) * 100000)
+
+# Bar plot for shooting rate per 100,000 residents
+ggplot(Shootings_by_borough, aes(x = BORO, y = Shooting_Rate)) +
+    geom_bar(stat = "identity", fill = "darkorange") +
+    labs(title = "Shooting Rate per 100,000 People by Borough (2006-2023)", 
+         x = "Borough", y = "Shooting Rate per 100,000") +
+    theme_minimal()
+
+```
+
+
+##5.Relationship Between Perpetrator's Age and Victim's Age
+```{r}
+
+# Create dataset and clean
+NYPD_shootings_age <- NYPD_data %>%
+  select(PERP_AGE_GROUP, VIC_AGE_GROUP) %>%
+  filter(PERP_AGE_GROUP != "UNKNOWN", PERP_AGE_GROUP != "(null)", PERP_AGE_GROUP != "1020", 
+         VIC_AGE_GROUP != "UNKNOWN") %>%
+  group_by(PERP_AGE_GROUP, VIC_AGE_GROUP) %>%
+  summarise(Number_shootings = n(), .groups = "drop") %>%
+  droplevels()
+
+# Create bins for the number of shootings
+NYPD_shootings_age$Shooting_Bin <- cut(NYPD_shootings_age$Number_shootings,
+    breaks = c(0, 50, 500, 1000, 2000, 3000, Inf),
+    labels = c("0-100", "101-500", "500-1000", "1001-2000", "2001-3000", "3000+"))
+
+# Plot the relation between perpetrator's age and victim's age
+ggplot(NYPD_shootings_age, aes(x = VIC_AGE_GROUP, y = PERP_AGE_GROUP, size = Shooting_Bin, color = Shooting_Bin)) +
+  geom_point(alpha = 0.7) +
+  scale_size_manual(values = c(3, 5, 7, 10, 15, 18)) +
+  scale_color_manual(values = c("lightblue", "cyan", "steelblue", "blue", "darkblue", "#4B0082")) +
+  labs(title = "Number of Shootings by Victim and Perpetrator Age Group, 2006-2023",
+       x = "Victim Age Group", y = "Perpetrator Age Group",
+       size = "Number of Shootings", color = "Shooting Range") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.margin = margin(t = 10, r = 10, b = 10, l = 10))
+
+
+```
+
+
+##6. Prediction of Shootings in the Bronx
+```{r}
+# Filter Bronx data
+Bronx_data <- NYPD_data %>%
+  filter(BORO == "BRONX") %>%
+  mutate(Year = as.numeric(format(OCCUR_DATE, "%Y")))
+
+# Group data by Year and count shootings
+Bronx_shootings <- Bronx_data %>%
+  group_by(Year) %>%
+  summarise(Number_shootings = n(), .groups = "drop")
+
+# Plot the number of shootings over the years
+ggplot(Bronx_shootings, aes(x = Year, y = Number_shootings, color = Number_shootings)) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(title = "Number of Shootings in the Bronx between 2006 and 2023",
+       x = "Year", y = "Number of Shootings") +
+  theme_minimal()
+
+# Poisson regression model to predict future shootings
+model <- glm(Number_shootings ~ Year, data = Bronx_shootings, family = poisson)
+
+# Predict shootings for future years
+pred <- data.frame(Year = c(2024:2030))
+pred$Predicted_shootings <- predict(model, newdata = pred, type = "response")
+
+# Combine historical and predicted data for plotting
+combined_data <- rbind(
+  data.frame(Date = Bronx_shootings$Year, Number_shootings = Bronx_shootings$Number_shootings, Type = "Historical"),
+  data.frame(Date = pred$Year, Number_shootings = pred$Predicted_shootings, Type = "Predicted")
+)
+
+# Plot historical and predicted shootings
+ggplot(combined_data, aes(x = Date, y = Number_shootings, color = Type)) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(title = "Historical and Predicted Shootings in the Bronx",
+       x = "Date", y = "Number of Shootings", color = "Data Type") +
+  scale_color_manual(values = c("blue", "red")) +
+  theme_minimal()
+
+```
+##7.
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+
+# dataset 
+NYPD_data <- data.frame(
+  INCIDENT_KEY = 1:18,
+  OCCUR_DATE = as.Date(c("2005-01-01", "2006-01-01", "2007-01-01", "2008-01-01", 
+                         "2009-01-01", "2010-01-01", "2011-01-01", "2012-01-01", 
+                         "2013-01-01", "2014-01-01", "2015-01-01", "2016-01-01", 
+                         "2017-01-01", "2018-01-01", "2019-01-01", "2020-01-01", 
+                         "2021-01-01", "2022-01-01")),
+  OCCUR_TIME = c("00:00", "00:00", "00:00", "00:00", "00:00", "00:00", 
+                 "00:00", "00:00", "00:00", "00:00", "00:00", "00:00", 
+                 "00:00", "00:00", "00:00", "00:00", "00:00", "00:00"),
+  BORO = rep("Bronx", 18),
+  LOC_OF_OCCUR_DESC = rep("Street", 18),
+  PRECINCT = c(40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40),
+  JURISDICTION_CODE = rep("NYPD", 18),
+  LOC_CLASSFCTN_DESC = rep("Public Space", 18),
+  LOCATION_DESC = rep("Outside", 18),
+  STATISTICAL_MURDER_FLAG = rep(0, 18),
+  PERP_AGE_GROUP = sample(c("18-24", "25-34", "35-44"), 18, replace = TRUE),
+  PERP_SEX = sample(c("M", "F"), 18, replace = TRUE),
+  PERP_RACE = sample(c("White", "Black", "Hispanic"), 18, replace = TRUE),
+  VIC_AGE_GROUP = sample(c("18-24", "25-34", "35-44"), 18, replace = TRUE),
+  VIC_SEX = sample(c("M", "F"), 18, replace = TRUE),
+  VIC_RACE = sample(c("White", "Black", "Hispanic"), 18, replace = TRUE),
+  X_COORD_CD = runif(18, -74.0, -73.9),   # Random coordinates
+  Y_COORD_CD = runif(18, 40.8, 40.9),      # Random coordinates
+  Latitude = runif(18, 40.8, 40.9),
+  Longitude = runif(18, -74.0, -73.9)
+)
+
+# Extract year from OCCUR_DATE for modeling as numeric
+NYPD_data$Year <- as.numeric(format(NYPD_data$OCCUR_DATE, "%Y"))
+
+# Aggregate the number of shootings per year
+yearly_shootings <- NYPD_data %>%
+  group_by(Year) %>%
+  summarise(Number_shootings = n(), .groups = "drop")
+
+# Prepare prediction data for future years
+pred <- data.frame(Year = 2024:2030)
+
+# Fit Poisson regression model
+model <- glm(Number_shootings ~ Year, data = yearly_shootings, family = poisson)
+
+# Summary of the model
+summary(model)
+
+# Predict the number of shootings for the years 2024 to 2030
+pred$Predicted_shootings <- predict(model, newdata = pred, type = "response")
+
+# Combine historical and predicted data for plotting
+combined_data <- rbind(
+  data.frame(Date = yearly_shootings$Year, Number_shootings = yearly_shootings$Number_shootings, Type = "Historical"),
+  data.frame(Date = pred$Year, Number_shootings = pred$Predicted_shootings, Type = "Predicted")
+)
+
+# Plot historical and predicted shootings
+ggplot(combined_data, aes(x = Date, y = Number_shootings, color = Type)) +
+  geom_line(size = 1) +
+  geom_point() +
+  labs(title = "Historical and Predicted Shootings in the Bronx",
+       x = "Year", 
+       y = "Number of Shootings",
+       color = "Data Type") +
+  scale_color_manual(values = c("blue", "red")) +
+  theme_minimal()
+
+# Session info
+sessionInfo()
+
+
+```
